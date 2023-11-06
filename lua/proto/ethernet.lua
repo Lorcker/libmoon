@@ -1,7 +1,7 @@
 ------------------------------------------------------------------------
 --- @file ethernet.lua
 --- @brief Ethernet protocol utility.
---- Utility functions for the mac_address and ethernet_header structs 
+--- Utility functions for the mac_address and ethernet_header structs
 --- Includes:
 --- - Ethernet constants
 --- - Mac address utility
@@ -17,7 +17,7 @@ local initHeader = initHeader
 
 local ntoh, hton = ntoh, hton
 local ntoh16, hton16 = ntoh16, hton16
-local bor, band, bnot, rshift, lshift= bit.bor, bit.band, bit.bnot, bit.rshift, bit.lshift
+local bor, band, bnot, rshift, lshift = bit.bor, bit.band, bit.bnot, bit.rshift, bit.lshift
 local istype = ffi.istype
 local format = string.format
 
@@ -42,11 +42,14 @@ eth.TYPE_8021Q = 0x8100
 --- EtherType for LACP (Actually, 'Slow Protocols')
 eth.TYPE_LACP = 0x8809
 
+--- EtherType for PROFINET-Real-Time-Frames
+eth.TYPE_PNIO = 0x8892
+
 --- Special addresses
 --- Ethernet broadcast address
-eth.BROADCAST	= "ff:ff:ff:ff:ff:ff"
+eth.BROADCAST = "ff:ff:ff:ff:ff:ff"
 --- Invalid null address
-eth.NULL	= "00:00:00:00:00:00"
+eth.NULL = "00:00:00:00:00:00"
 
 
 ------------------------------------------------------------------------
@@ -54,7 +57,7 @@ eth.NULL	= "00:00:00:00:00:00"
 ------------------------------------------------------------------------
 
 -- struct
-ffi.cdef[[
+ffi.cdef [[
 	union __attribute__((__packed__)) mac_address {
 		uint8_t		uint8[6];
 		uint64_t	uint64[0]; // for efficient reads
@@ -95,9 +98,9 @@ end
 --- @param rhs Address in 'union mac_address' format.
 --- @return true if equal, false otherwise.
 function macAddr.__eq(lhs, rhs)
-	local isMAC = istype(macAddrType, lhs) and istype(macAddrType, rhs) 
+	local isMAC = istype(macAddrType, lhs) and istype(macAddrType, rhs)
 	for i = 0, 5 do
-		isMAC = isMAC and lhs.uint8[i] == rhs.uint8[i] 
+		isMAC = isMAC and lhs.uint8[i] == rhs.uint8[i]
 	end
 	return isMAC
 end
@@ -106,11 +109,10 @@ end
 --- @return Address in string format.
 function macAddr:getString()
 	return ("%02x:%02x:%02x:%02x:%02x:%02x"):format(
-			self.uint8[0], self.uint8[1], self.uint8[2], 
-			self.uint8[3], self.uint8[4], self.uint8[5]
-			)
+		self.uint8[0], self.uint8[1], self.uint8[2],
+		self.uint8[3], self.uint8[4], self.uint8[5]
+	)
 end
-
 
 ----------------------------------------------------------------------------
 ---- Ethernet header
@@ -300,7 +302,7 @@ end
 function etherHeader:getTypeString()
 	local type = self:getType()
 	local cleartext = ""
-	
+
 	if type == eth.TYPE_IP then
 		cleartext = "(IP4)"
 	elseif type == eth.TYPE_IP6 then
@@ -313,6 +315,8 @@ function etherHeader:getTypeString()
 		cleartext = "(LACP)"
 	elseif type == eth.TYPE_8021Q then
 		cleartext = "(VLAN)"
+	elseif type == eth.TYPE_PNIO then
+		cleartext = "(PNIO)"
 	else
 		cleartext = "(unknown)"
 	end
@@ -341,7 +345,7 @@ function etherHeader:fill(args, pre)
 	local dst = pre .. "Dst"
 	args[src] = args[src] or "01:02:03:04:05:06"
 	args[dst] = args[dst] or "07:08:09:0a:0b:0c"
-	
+
 	-- addresses can be either a string, a mac_address ctype or a device/queue object
 	if type(args[src]) == "string" then
 		self:setSrcString(args[src])
@@ -388,12 +392,12 @@ end
 --- @see etherHeader:fill
 function etherHeader:get(pre)
 	pre = pre or "eth"
-	
+
 	local args = {}
 	args[pre .. "Src"] = self:getSrcString()
 	args[pre .. "Dst"] = self:getDstString()
 	args[pre .. "Type"] = self:getType()
-	
+
 	return args
 end
 
@@ -420,21 +424,29 @@ function etherHeader:getString()
 end
 
 function etherVlanHeader:getString()
-	return "ETH " .. self:getSrcString() .. " > " .. self:getDstString() .. " vlan " .. self:getVlanTag() .. " type " .. self:getTypeString()
+	return "ETH " ..
+		self:getSrcString() ..
+		" > " .. self:getDstString() .. " vlan " .. self:getVlanTag() .. " type " .. self:getTypeString()
 end
 
 function etherQinQHeader:getString()
-	return "ETH " .. self:getSrcString() .. " > " .. self:getDstString() .. " outerVlan " .. self:getOuterVlanTag() .. " innerVlan " .. self:getInnerVlanTag() .. " type " .. self:getTypeString()
+	return "ETH " ..
+		self:getSrcString() ..
+		" > " ..
+		self:getDstString() ..
+		" outerVlan " ..
+		self:getOuterVlanTag() .. " innerVlan " .. self:getInnerVlanTag() .. " type " .. self:getTypeString()
 end
 
 -- Maps headers to respective types.
--- This list should be extended whenever a new type is added to 'Ethernet constants'. 
+-- This list should be extended whenever a new type is added to 'Ethernet constants'.
 local mapNameType = {
 	ip4 = eth.TYPE_IP,
 	ip6 = eth.TYPE_IP6,
 	arp = eth.TYPE_ARP,
-	ptp = eth.TYPE_PTP, 
+	ptp = eth.TYPE_PTP,
 	lacp = eth.TYPE_LACP,
+	pnio = eth.TYPE_PNIO,
 }
 
 --- Resolve which header comes after this one (in a packet).
