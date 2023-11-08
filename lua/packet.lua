@@ -996,6 +996,6 @@ pkt.getGreQinQUdpPacket = function(self, ip4)
 end
 
 --- ProfinetIO
-pkt.getPnioPacket = createStack("eth", "pnio")
+pkt.getPnioPacket = createStack("eth", "pnio", "noPayload")
 
 return pkt

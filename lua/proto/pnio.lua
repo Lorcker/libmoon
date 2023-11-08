@@ -14,9 +14,8 @@ require "proto.template"
 
 -- Create a cached reference to functions, reducing the need to repeatedly look up the function in the global scope.
 local initHeader = initHeader
-local ntoh, hton = ntoh, hton
+local ntoh16, hton16 = ntoh16, hton16
 local tonumber = tonumber
-local uint32 = ffi.typeof("uint32_t")
 local format = string.format
 local cast = ffi.cast
 
@@ -25,29 +24,29 @@ local pnio = {}
 
 pnio.headerFormat = [[
     uint16_t    frame_id;
-    uint8_t     rt_data[]; // use with a noPayload proto stack
+    uint8_t     payload[]; // use with a noPayload proto stack
 ]]
 
-pnio.headerVariableMember = "rt_data"
+pnio.headerVariableMember = "payload"
 
 
 
 --- Ranges of PROFINET_RT FRAMEID. Values express the upper bound.
 
 --- Time Syncronisation Frames
-pnio.FRAMEID_UPPER_TIMESYNC = hton(0x00FF)
+pnio.FRAMEID_UPPER_TIMESYNC = 0x00FF
 
 --- RT_CLASS_3 Frames (IRTtop)
-pnio.FRAMEID_UPPER_RT_3 = hton(0x7FFF)
+pnio.FRAMEID_UPPER_RT_3 = 0x7FFF
 
 --- RT_CLASS_2 Frames (IRTflex)
-pnio.FRAMEID_UPPER_RT_2 = hton(0xBFFF)
+pnio.FRAMEID_UPPER_RT_2 = 0xBFFF
 
 --- RT_CLASS_3 Frames (RT/UDP)
-pnio.FRAMEID_UPPER_RT_1 = hton(0xFBFF)
+pnio.FRAMEID_UPPER_RT_1 = 0xFBFF
 
 --- Acyclic transmission "high"
-pnio.FRAMEID_UPPER_AC_HIGH = hton(0xFCFF)
+pnio.FRAMEID_UPPER_AC_HIGH = 0xFCFF
 
 --- Reserverd
 
@@ -57,7 +56,7 @@ local function isFrameTimeSync(frameId)
 end
 
 local function isFrameRtClass3(frameId)
-    return frameId > pnio.FRAMEID_UPPER_TIMESYNC > frameId <= pnio.FRAMEID_UPPER_RT_3
+    return frameId > pnio.FRAMEID_UPPER_TIMESYNC and frameId <= pnio.FRAMEID_UPPER_RT_3
 end
 
 local function isFrameRtClass2(frameId)
@@ -85,14 +84,7 @@ struct __attribute__((__packed__)) profinetRt_apdu_status {
 	uint8_t data_status;
     uint8_t transfer_status;
 };
-struct __attribute__((__packed__)) profinetRt_cyclic_rt_data {
-    unint8_t rt_user_data[];
-    struct profinetRt_apdu_status apdu_status;
-}
 ]]
---- Struct for generaring valid Cylic Frames
-local profinetRtCylcicRTData = ffi.typeof("struct profinetRt_cyclic_rt_data*")
-
 local profinetRtApduStatusType = ffi.typeof("struct profinetRt_apdu_status*")
 local profinetRt_apdu_status = {}
 profinetRt_apdu_status.__index = profinetRt_apdu_status
@@ -100,13 +92,13 @@ profinetRt_apdu_status.__index = profinetRt_apdu_status
 --- Set cycleCounter
 --- @param cycle_counter number as uint16_t
 function profinetRt_apdu_status:setCylceCounter(cycle_counter)
-    self["cycle_counter"] = hton(cycle_counter or 0)
+    self["cycle_counter"] = hton16(cycle_counter or 0)
 end
 
 --- Get CycleCounter
---- @return number cycle_counter as uint16_t
+--- @return Byte cycle_counter as uint16_t
 function profinetRt_apdu_status:getCycleCounter()
-    return ntoh(self["cycle_counter"])
+    return hton16(self["cycle_counter"])
 end
 
 --- Set data_status
@@ -139,7 +131,7 @@ function profinetRt_apdu_status:getString()
     )
 end
 
-profinetRt_apdu_status.metatype = ffi.metatype("profinetRt_apdu_status", profinetRt_apdu_status)
+ffi.metatype("struct profinetRt_apdu_status", profinetRt_apdu_status)
 
 ------------------------------------------------------------------------------------
 ---- PROFINET_RT Header
@@ -152,22 +144,21 @@ pnioHeader.__index = pnioHeader
 --- Set the frameId.
 --- @param frameId number as uint16
 function pnioHeader:setFrameId(frameId)
-    self.frame_id = hton(frameId or pnio.FRAMEID_UPPER_RT_1)
+    self.frame_id = hton16(frameId or pnio.FRAMEID_UPPER_RT_1)
 end
 
 --- Get the frameId.
 function pnioHeader:getFrameId()
-    return tonumber(uint32(hton(self.frame_id)))
+    return hton16(self.frame_id)
 end
 
 function pnioHeader:getApduStatus()
-    local rt_data = self["rt_data"]
-
     -- Check if this rt packet is cyclic and thous has an apduStatus
     if not isFrameRTCyclic(self:getFrameId()) then
         return
     end
 
+    local rt_data = self["payload"]
     -- Determin position of the APDUStatus
     -- If it does not work ffi.sizeof
     local sizeApduStatus = ffi.sizeof(profinetRtApduStatusType)
@@ -180,7 +171,7 @@ end
 
 --- Retrieve the Frame type.
 --- @return string FrameType.
-function pnioHeader:getTypeString()
+function pnioHeader:getFrameString()
     local frame_id = self:getFrameId()
     local cleartext = ""
 
@@ -196,7 +187,7 @@ function pnioHeader:getTypeString()
         cleartext = "(unknown)"
     end
 
-    return format("0x%04x %s", type, cleartext)
+    return format("0x%04x %s", frame_id, cleartext)
 end
 
 ------------------------------------------------------------------------------------
@@ -223,21 +214,6 @@ function pnioHeader:fill(args, pre)
 
     local frame_id = args[pre .. "FrameId"]
     self:setFrameId(frame_id)
-
-    if not isFrameRTCyclic(frame_id) then
-        return
-    end
-
-    -- The rt_data will be consisting of 36 bytes of 0 (the user data) and 32 bytes for apduStatus (68 total)
-    local rt_data = ffi.new("uint8_t[68]", {})
-
-    local apdu_status = profinetRt_apdu_status.metatype()
-    apdu_status:setCylceCounter(args[pre .. "ApduStatus_CylceCounter"])
-    apdu_status:setDataStatus(args[pre .. "ApduStatus_DataStatus"])
-    apdu_status:setTransferStatus(args[pre .. "ApduStatus_TransferStatus"])
-
-    local rt_data = ffi.new(profinetRtCylcicRTData, { rt_user_data = rt_data, apdu_status = apdu_status })
-    self["rt_data"] = rt_data
 end
 
 --- Retrieve the values of all members.
@@ -265,9 +241,7 @@ function pnioHeader:get(pre)
 end
 
 function pnioHeader:getString()
-    local string = ("ProfinetRT, frame_id %d \n"):format(
-        self:getFrameId()
-    )
+    local string = "ProfinetRT, frame_id " .. self:getFrameString()
 
     -- Check if apduStatus is present and retieve
     local apduStatus = self:getApduStatus()
