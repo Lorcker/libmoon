@@ -14,8 +14,7 @@ require "proto.template"
 
 -- Create a cached reference to functions, reducing the need to repeatedly look up the function in the global scope.
 local initHeader = initHeader
-local ntoh16, hton16 = ntoh16, hton16
-local tonumber = tonumber
+local hton16 = hton16
 local format = string.format
 local cast = ffi.cast
 
@@ -86,6 +85,8 @@ struct __attribute__((__packed__)) profinetRt_apdu_status {
 };
 ]]
 local profinetRtApduStatusType = ffi.typeof("struct profinetRt_apdu_status*")
+
+--- @class profinetRt_apdu_status
 local profinetRt_apdu_status = {}
 profinetRt_apdu_status.__index = profinetRt_apdu_status
 
@@ -96,8 +97,9 @@ function profinetRt_apdu_status:setCylceCounter(cycle_counter)
 end
 
 --- Get CycleCounter
---- @return Byte cycle_counter as uint16_t
+--- @return number cycle_counter as uint16_t
 function profinetRt_apdu_status:getCycleCounter()
+    ---@diagnostic disable-next-line: return-type-mismatch
     return hton16(self["cycle_counter"])
 end
 
@@ -136,14 +138,16 @@ ffi.metatype("struct profinetRt_apdu_status", profinetRt_apdu_status)
 ------------------------------------------------------------------------------------
 ---- PROFINET_RT Header
 ------------------------------------------------------------------------------------
-
----@class profinetRtHeader
+--- @class pnioHeader
+--- @field private frame_id number A uint16 number containing the FrameId
+--- @diagnostic disable-next-line: assign-type-mismatch, missing-parameter
 local pnioHeader = initHeader()
 pnioHeader.__index = pnioHeader
 
 --- Set the frameId.
 --- @param frameId number as uint16
 function pnioHeader:setFrameId(frameId)
+    ---@diagnostic disable-next-line: assign-type-mismatch
     self.frame_id = hton16(frameId or pnio.FRAMEID_UPPER_RT_1)
 end
 
@@ -152,7 +156,10 @@ function pnioHeader:getFrameId()
     return hton16(self.frame_id)
 end
 
-function pnioHeader:getApduStatus()
+--- Get the ApduStatus of a clylic packet
+--- @param pkt_len number Length of the packet. Needed because apdu_status is placed at the end of the packet
+--- @return ffi.cdata*|nil
+function pnioHeader:getApduStatus(pkt_len)
     -- Check if this rt packet is cyclic and thous has an apduStatus
     if not isFrameRTCyclic(self:getFrameId()) then
         return
@@ -163,10 +170,10 @@ function pnioHeader:getApduStatus()
     -- If it does not work ffi.sizeof
     local sizeApduStatus = ffi.sizeof(profinetRtApduStatusType)
     local sizeFcs = 4
-    local cycleCounterPos = #rt_data - sizeApduStatus - sizeFcs
+    local cycleCounterPos = pkt_len - sizeApduStatus - sizeFcs
 
-    local apdu_satus = cast(profinetRtApduStatusType, rt_data.unit8 + cycleCounterPos)
-    return apdu_satus
+    local apdu_status = cast(profinetRtApduStatusType, rt_data.unit8 + cycleCounterPos)
+    return apdu_status
 end
 
 --- Retrieve the Frame type.
@@ -227,15 +234,15 @@ function pnioHeader:get(pre)
     local frame_id = self:getFrameId()
     args[pre .. "FrameId"] = frame_id
 
-    local apdu_status = self:getApduStatus()
-    if not apdu_status then
-        return args
-    end
+    -- local apdu_status = self:getApduStatus()
+    -- if not apdu_status then
+    --     return args
+    -- end
 
-    -- Add apdu_status to retured args
-    args[pre .. "ApduStatus_CylceCounter"] = apdu_status:getCycleCounter()
-    args[pre .. "ApduStatus_DataStatus"] = apdu_status:getDataStatus()
-    args[pre .. "ApduStatus_TransferStatus"] = apdu_status:getTransferStatus()
+    -- -- Add apdu_status to retured args
+    -- args[pre .. "ApduStatus_CylceCounter"] = apdu_status:getCycleCounter()
+    -- args[pre .. "ApduStatus_DataStatus"] = apdu_status:getDataStatus()
+    -- args[pre .. "ApduStatus_TransferStatus"] = apdu_status:getTransferStatus()
 
     return args
 end
@@ -243,15 +250,16 @@ end
 function pnioHeader:getString()
     local string = "ProfinetRT, frame_id " .. self:getFrameString()
 
-    -- Check if apduStatus is present and retieve
-    local apduStatus = self:getApduStatus()
+    -- -- Check if apduStatus is present and retieve
+    -- local apduStatus = self:getApduStatus()
 
-    if not apduStatus then
-        return string
-    end
+    -- if not apduStatus then
+    --     return string
+    -- end
 
-    return string .. "   " ..
-        apduStatus:getString()
+    -- return string .. "   " ..
+    --     apduStatus:getString()
+    return string
 end
 
 --- Resolve which header comes after this one (in a packet)
