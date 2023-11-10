@@ -18,9 +18,11 @@ local hton16 = hton16
 local format = string.format
 local cast = ffi.cast
 
-
 local pnio = {}
 
+------------------------------------------------------------------------------------
+---- PROFINET_IO Realtime headerFormat
+------------------------------------------------------------------------------------
 pnio.headerFormat = [[
     uint16_t    frame_id;
     uint8_t     payload[]; // use with a noPayload proto stack
@@ -29,57 +31,71 @@ pnio.headerFormat = [[
 pnio.headerVariableMember = "payload"
 
 
+------------------------------------------------------------------------------------
+---- Ranges of PROFINET_RT FRAMEID after Tables in DIN EN IEC 61158-6-10 4.2.2.6
+---- Multicast and unicast are summarized and some specialized IDs are excluded
+------------------------------------------------------------------------------------
 
---- Ranges of PROFINET_RT FRAMEID. Values express the upper bound.
+--- FrameIDs Dedicated to communication class RT_CLASS_3(RED) unicast/multicast
+pnio.FRAMEID_LOWER_RT_3 = 0x0100
+pnio.FRAMEID_UPPER_RT_3 = 0x0FFF
 
---- Time Syncronisation Frames
-pnio.FRAMEID_UPPER_TIMESYNC = 0x00FF
+--- FrameIDs Dedicated to communication class RT_CLASS_1(GREEN) unicast/multicast
+pnio.FRAMEID_LOWER_RT_1 = 0x8000
+pnio.FRAMEID_UPPER_RT_1 = 0xBFFF
 
---- RT_CLASS_3 Frames (IRTtop)
-pnio.FRAMEID_UPPER_RT_3 = 0x7FFF
+--- FrameIDs Dedicated to communication class RT_CLASS_UDP unicast/multicast
+--- pnio.FRAMEID_LOWER_RT_UDP = 0xC000
+--- pnio.FRAMEID_UPPER_RT_UDP = 0xFBFF
 
---- RT_CLASS_2 Frames (IRTflex)
-pnio.FRAMEID_UPPER_RT_2 = 0xBFFF
+--- FrameID for Alarm_High
+pnio.FRAMEID_ALARM_HIGH = 0xFC01
 
---- RT_CLASS_3 Frames (RT/UDP)
-pnio.FRAMEID_UPPER_RT_1 = 0xFBFF
+--- FrameID for Alarm_Low
+pnio.FRAMEID_ALARM_LOW = 0xFE01
 
---- Acyclic transmission "high"
-pnio.FRAMEID_UPPER_AC_HIGH = 0xFCFF
-
---- Reserverd
-
-
-local function isFrameTimeSync(frameId)
-    return frameId > 0x0 and frameId <= pnio.FRAMEID_UPPER_TIMESYNC
+--- Check if FrameId is dedicated to RT_CLASS_3
+--- @param frame_id number
+--- @return boolean
+local function isFrameRtClass3(frame_id)
+    return frame_id >= pnio.FRAMEID_LOWER_RT_3 and frame_id <= pnio.FRAMEID_UPPER_RT_3
 end
 
-local function isFrameRtClass3(frameId)
-    return frameId > pnio.FRAMEID_UPPER_TIMESYNC and frameId <= pnio.FRAMEID_UPPER_RT_3
+--- Check if FrameId is dedicated to RT_CLASS_1
+--- @param frame_id number
+--- @return boolean
+local function isFrameRtClass1(frame_id)
+    return frame_id >= pnio.FRAMEID_UPPER_RT_1 and frame_id <= pnio.FRAMEID_UPPER_RT_1
 end
 
-local function isFrameRtClass2(frameId)
-    return frameId > pnio.FRAMEID_UPPER_RT_3 and frameId <= pnio.FRAMEID_UPPER_RT_2
+--- Check if FrameId is dedicated to Alarm_High
+--- @param frame_id number
+--- @return boolean
+local function isFrameAlarmHigh(frame_id)
+    return frame_id == pnio.FRAMEID_ALARM_HIGH
 end
 
-local function isFrameRtClass1(frameId)
-    return frameId > pnio.FRAMEID_UPPER_RT_2 and frameId <= pnio.FRAMEID_UPPER_RT_1
+--- Check if FrameId is dedicated to Alarm_Low
+--- @param frame_id number
+--- @return boolean
+local function isFrameAlarmLow(frame_id)
+    return frame_id == pnio.FRAMEID_ALARM_LOW
 end
 
--- Cyclic are RT_CLASS_1, RT_CLASS_2, RT_CLASS_3
-local function isFrameRTCyclic(frameId)
-    return isFrameRtClass1(frameId) or
-        isFrameRtClass2(frameId) or
-        isFrameRtClass3(frameId)
+--- Check if FrameId is dedicated to a cylcic RT_CLASS and thous contains an apdu_status.
+--- @param frame_id number
+--- @return boolean
+local function isFrameRTCyclic(frame_id)
+    return isFrameRtClass1(frame_id) or isFrameRtClass3(frame_id)
 end
 
 
 ------------------------------------------------------------------------------------
----- PROFINET_RT APDU_Status
+---- PROFINET_RT APDU_Status of cylcic realitme Frames
 ------------------------------------------------------------------------------------
 ffi.cdef [[
 struct __attribute__((__packed__)) profinetRt_apdu_status {
-	uint16_t cylce_counter;
+	uint16_t cycle_counter;
 	uint8_t data_status;
     uint8_t transfer_status;
 };
@@ -92,7 +108,7 @@ profinetRt_apdu_status.__index = profinetRt_apdu_status
 
 --- Set cycleCounter
 --- @param cycle_counter number as uint16_t
-function profinetRt_apdu_status:setCylceCounter(cycle_counter)
+function profinetRt_apdu_status:setCycleCounter(cycle_counter)
     self["cycle_counter"] = hton16(cycle_counter or 0)
 end
 
@@ -127,10 +143,11 @@ function profinetRt_apdu_status:getTransferStatus()
     return self["transfer_status"]
 end
 
+--- Get string representation of the apdu_status
+--- @return string apdu_status_string
 function profinetRt_apdu_status:getString()
-    return ("APDU_Status, cycle_counter %d, data_stats %d, transfer_status %d").format(
-        self:getCycleCounter(), self:getDataStatus(), self:getTransferStatus()
-    )
+    return ("APDU_Status, cycle_counter %d, data_stats %d, transfer_status %d"):format(self:getCycleCounter(),
+        self:getDataStatus(), self:getTransferStatus())
 end
 
 ffi.metatype("struct profinetRt_apdu_status", profinetRt_apdu_status)
@@ -145,20 +162,22 @@ local pnioHeader = initHeader()
 pnioHeader.__index = pnioHeader
 
 --- Set the frameId.
---- @param frameId number as uint16
+--- @param frameId number as uint16 in little endian
 function pnioHeader:setFrameId(frameId)
     ---@diagnostic disable-next-line: assign-type-mismatch
     self.frame_id = hton16(frameId or pnio.FRAMEID_UPPER_RT_1)
 end
 
 --- Get the frameId.
+--- @return number frame_id as uint16 in big endian
 function pnioHeader:getFrameId()
+    ---@diagnostic disable-next-line: return-type-mismatch
     return hton16(self.frame_id)
 end
 
 --- Get the ApduStatus of a clylic packet
 --- @param pkt_len number Length of the packet. Needed because apdu_status is placed at the end of the packet
---- @return ffi.cdata*|nil
+--- @return profinetRt_apdu_status|nil
 function pnioHeader:getApduStatus(pkt_len)
     -- Check if this rt packet is cyclic and thous has an apduStatus
     if not isFrameRTCyclic(self:getFrameId()) then
@@ -166,13 +185,15 @@ function pnioHeader:getApduStatus(pkt_len)
     end
 
     local rt_data = self["payload"]
-    -- Determin position of the APDUStatus
-    -- If it does not work ffi.sizeof
-    local sizeApduStatus = ffi.sizeof(profinetRtApduStatusType)
-    local sizeFcs = 4
-    local cycleCounterPos = pkt_len - sizeApduStatus - sizeFcs
 
-    local apdu_status = cast(profinetRtApduStatusType, rt_data.unit8 + cycleCounterPos)
+    -- Determin position of the APDUStatus.
+    local sizeApduStatus = 4
+    local sizeFrameId = 2
+    local sizeEtherHeader = 14
+    local cycleCounterPos = pkt_len - sizeEtherHeader - sizeApduStatus - sizeFrameId
+
+    local apdu_status = cast(profinetRtApduStatusType, rt_data + cycleCounterPos)
+    ---@diagnostic disable-next-line: return-type-mismatch
     return apdu_status
 end
 
@@ -182,14 +203,14 @@ function pnioHeader:getFrameString()
     local frame_id = self:getFrameId()
     local cleartext = ""
 
-    if isFrameTimeSync(frame_id) then
-        cleartext = "(TimeSync)"
+    if isFrameRtClass3(frame_id) then
+        cleartext = "(RT_CLASS_3)"
     elseif isFrameRtClass1(frame_id) then
         cleartext = "(RT_CLASS_1)"
-    elseif isFrameRtClass2(frame_id) then
-        cleartext = "(RT_CLASS_2)"
-    elseif isFrameRtClass3(frame_id) then
-        cleartext = "(RT_CLASS_3)"
+    elseif isFrameAlarmHigh(frame_id) then
+        cleartext = "(Alarm_High)"
+    elseif isFrameAlarmLow(frame_id) then
+        cleartext = "(Alarm_Low)"
     else
         cleartext = "(unknown)"
     end
@@ -223,7 +244,7 @@ function pnioHeader:fill(args, pre)
     self:setFrameId(frame_id)
 end
 
---- Retrieve the values of all members.
+--- Retrieve the values of all members exepect apdu_status. For this filed the pkt_len is required (See getAll())
 --- @param pre string Prefix for namedArgs. Default 'profinet_rt'.
 --- @return table namedArguments For a list of arguments see "See also".
 --- @see profinetRtHeader.fill
@@ -234,32 +255,36 @@ function pnioHeader:get(pre)
     local frame_id = self:getFrameId()
     args[pre .. "FrameId"] = frame_id
 
-    -- local apdu_status = self:getApduStatus()
-    -- if not apdu_status then
-    --     return args
-    -- end
+    return args
+end
 
-    -- -- Add apdu_status to retured args
-    -- args[pre .. "ApduStatus_CylceCounter"] = apdu_status:getCycleCounter()
-    -- args[pre .. "ApduStatus_DataStatus"] = apdu_status:getDataStatus()
-    -- args[pre .. "ApduStatus_TransferStatus"] = apdu_status:getTransferStatus()
+--- Retrieve the values of all members including apdu_status if packet is cylic.
+--- @param pre string Prefix for namedArgs. Default 'profinet_rt'.
+--- @return table namedArguments For a list of arguments see "See also".
+--- @see profinetRtHeader.fill
+function pnioHeader:getAll(pre, pkt_len)
+    pre = pre or "profinet_rt"
+
+    local args = {}
+    local frame_id = self:getFrameId()
+    args[pre .. "FrameId"] = frame_id
+
+    --- @type profinetRt_apdu_status|nil
+    local apdu_status = self:getApduStatus(pkt_len)
+    if not apdu_status then
+        return args
+    end
+
+    -- Add apdu_status to retured args
+    args[pre .. "ApduStatus_CylceCounter"] = apdu_status:getCycleCounter()
+    args[pre .. "ApduStatus_DataStatus"] = apdu_status:getDataStatus()
+    args[pre .. "ApduStatus_TransferStatus"] = apdu_status:getTransferStatus()
 
     return args
 end
 
 function pnioHeader:getString()
-    local string = "ProfinetRT, frame_id " .. self:getFrameString()
-
-    -- -- Check if apduStatus is present and retieve
-    -- local apduStatus = self:getApduStatus()
-
-    -- if not apduStatus then
-    --     return string
-    -- end
-
-    -- return string .. "   " ..
-    --     apduStatus:getString()
-    return string
+    return "ProfinetRT, frame_id " .. self:getFrameString()
 end
 
 --- Resolve which header comes after this one (in a packet)
