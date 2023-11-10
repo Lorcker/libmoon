@@ -2,6 +2,7 @@ local lm     = require "libmoon"
 local device = require "device"
 local memory = require "memory"
 local stats  = require "stats"
+local ether  = require "proto.ethernet"
 
 function configure(parser)
     parser:argument("devs", "Device(s) to use."):args(1)
@@ -24,7 +25,7 @@ function master(args)
 end
 
 function dumper(queue, args, threadId, devId)
-    local bufs = memory.createbufArray()
+    local bufs = memory.bufArray()
     while lm.running() do
         -- tryRecv
         local rx = queue:tryRecv(bufs, 100)
@@ -34,7 +35,7 @@ function dumper(queue, args, threadId, devId)
 
             --- @type pkt
             local packet = buf:get()
-            if packet.pnio then
+            if packet.eth.type == bswap16(ether.TYPE_PNIO) then
                 -- Packet is pnio packet and hat the accoring functions
                 --- @type profinetRt_apdu_status
                 local apdu_status = packet.pnio:getApduStatus(packet:getSize())
