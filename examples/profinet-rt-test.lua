@@ -38,7 +38,7 @@ function dumper(queue, args, threadId, devId)
             if packet.eth.type == bswap16(ether.TYPE_PNIO) then
                 -- Packet is pnio packet and hat the accoring functions
                 --- @type profinetRt_apdu_status
-                local apdu_status = packet.pnio:getApduStatus(packet:getSize())
+                local apdu_status = packet.pnio:getApduStatus(buf:getSize())
                 local total_string = packet.eth:getString() .. packet.pnio:getString() .. apdu_status:getString()
                 print(total_string)
             end
