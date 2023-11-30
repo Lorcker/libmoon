@@ -65,7 +65,7 @@ end
 --- @param frame_id number
 --- @return boolean
 local function isFrameRtClass1(frame_id)
-    return frame_id >= pnio.FRAMEID_UPPER_RT_1 and frame_id <= pnio.FRAMEID_UPPER_RT_1
+    return frame_id >= pnio.FRAMEID_LOWER_RT_1 and frame_id <= pnio.FRAMEID_UPPER_RT_1
 end
 
 --- Check if FrameId is dedicated to Alarm_High
